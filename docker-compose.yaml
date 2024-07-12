@@ -1,0 +1,34 @@
+services:
+  minio:
+    container_name: minio
+
+    build:
+      context: minio
+      dockerfile: Dockerfile
+
+    ports:
+      - '49000:49000'
+      - '49001:49001'
+
+    environment:
+      - MINIO_ROOT_USER=miniroot
+      - MINIO_ROOT_PASSWORD=miniroot
+      - MINIO_DEFAULT_BUCKETS=vybe
+    
+    volumes:
+      - minio-vol:/data
+
+    networks:
+      _net:
+        ipv4_address: 10.5.0.2
+
+networks:
+  _net:
+    ipam:
+      config:
+        - subnet: 10.5.0.0/16
+
+volumes:
+  minio-vol:
+  es-vol:
+  kibana-vol:
