@@ -1,13 +1,34 @@
+from functools import wraps
 from datetime import datetime
 from enum import Enum as PythonEnum
 from sqlalchemy import Enum as SQLEnum, Integer, Column, String, DateTime, Boolean, Date, ForeignKey, \
-    PrimaryKeyConstraint
-from sqlalchemy.orm import relationship, mapped_column
+    PrimaryKeyConstraint, create_engine
+from sqlalchemy.orm import relationship, mapped_column, sessionmaker, scoped_session, with_polymorphic
 from sqlalchemy.ext.declarative import declarative_base
 
-from utils.db import with_session
+engine = create_engine('sqlite:///vybe.db')
+Session = sessionmaker(bind=engine)
+db_session = scoped_session(Session)
 
 Base = declarative_base()
+
+
+# Functions
+def with_session(method):
+    @wraps(method)
+    def wrapper(*args, **kwargs):
+        session = db_session()
+        try:
+            result = method(session=session, *args, **kwargs)
+            session.commit()
+            return result
+        except Exception as e:
+            session.rollback()
+            raise e
+        finally:
+            session.close()
+
+    return wrapper
 
 
 # Enums
@@ -33,7 +54,6 @@ class ReportReason(PythonEnum):
 # BaseModel
 class BaseModel(Base):
     __abstract__ = True
-
     id = Column(Integer, primary_key=True, autoincrement=True, nullable=False, unique=True)
     created_at = Column(DateTime, default=datetime.now(), nullable=False)
     is_deleted = Column(Boolean, default=False)
@@ -67,24 +87,6 @@ class BaseModel(Base):
 
 
 # Abstracts
-class User(BaseModel):
-    __tablename__ = 'users'
-
-    username = Column(String(50), unique=True, nullable=False)
-    password = Column(String(100), nullable=False)
-    email = Column(String(100), unique=True, nullable=False)
-    last_login = Column(DateTime, nullable=True)
-    first_name = Column(String(50))
-    last_name = Column(String(50))
-    display_name = Column(String(50), unique=True)
-    description = Column(String(255))
-
-    type = Column(String(15))
-
-    __mapper_args__ = {
-        'polymorphic_on': 'type',
-        'polymorphic_identity': 'user'
-    }
 
 
 class Content(BaseModel):
@@ -115,7 +117,7 @@ class Post(Content):
     __tablename__ = 'posts'
 
     group_id = mapped_column(ForeignKey('groups.id'))
-    group = relationship("Group", back_populates="posts")
+    group = relationship('Group', back_populates='posts')
 
     __mapper_args__ = {
         'polymorphic_identity': 'post'
@@ -141,7 +143,7 @@ class Group(BaseModel):
     is_suspended = Column(Boolean, default=False)
     suspended_reason = Column(String(255))
 
-    posts = relationship("Post", back_populates="group")
+    posts = relationship('Post', back_populates='group')
 
 
 class Reaction(BaseModel):
@@ -197,6 +199,28 @@ class Report(BaseModel):
     comment_id = mapped_column(ForeignKey('comments.id'), nullable=True)
 
 
+class User(BaseModel):
+    __tablename__ = 'users'
+
+    _is_core = True
+
+    username = Column(String(50), unique=True, nullable=False)
+    password = Column(String(100), nullable=False)
+    email = Column(String(100), unique=True, nullable=False)
+    last_login = Column(DateTime, nullable=True)
+    first_name = Column(String(50))
+    last_name = Column(String(50))
+    display_name = Column(String(50), unique=True)
+    description = Column(String(255))
+
+    type = Column(String(15))
+
+    __mapper_args__ = {
+        'polymorphic_on': type,
+        'polymorphic_identity': 'user'
+    }
+
+
 class Administrator(User):
     __tablename__ = 'administrators'
 
@@ -218,3 +242,12 @@ class GroupAdmin(User):
     __mapper_args__ = {
         'polymorphic_identity': 'group_administrator'
     }
+
+
+@with_session
+def get_by_id(session: Session, table, obj_id: int):
+    if table is Administrator or table is GroupAdmin:
+        session = session.query(with_polymorphic(User, [Administrator, GroupAdmin]))
+    elif table is Post or table is Comment:
+        session = session.query(with_polymorphic(User, [Post, Comment]))
+    return session.filter(table.id == obj_id).first()
